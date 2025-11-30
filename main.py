@@ -127,7 +127,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     return {"token": token, "email": req.email}
 
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_file(file: UploadFile = File(...), email: str = None, db: Session = Depends(get_db)):
     try:
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
@@ -138,7 +138,8 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
             filename=file.filename,
             rows=len(df),
             columns=",".join(df.columns.tolist()),
-            csv_data=csv_text
+            csv_data=csv_text,
+            user_email=email  # ADD THIS LINE
         )
         db.add(new_dataset)
         db.commit()
@@ -332,7 +333,27 @@ def get_validation(dataset_id: int, db: Session = Depends(get_db)):
             }
         }
     }
-
+@app.get("/history")
+def get_history(email: str, db: Session = Depends(get_db)):
+    # Get all datasets for this user
+    datasets = db.query(Dataset).filter(Dataset.user_email == email).order_by(Dataset.uploaded_at.desc()).all()
+    
+    history = []
+    for dataset in datasets:
+        # Get the validation for this dataset
+        validation = db.query(Validation).filter(Validation.dataset_id == dataset.id).first()
+        
+        if validation:
+            history.append({
+                "dataset_id": dataset.id,
+                "filename": dataset.filename,
+                "rows": dataset.rows,
+                "uploaded_at": dataset.uploaded_at.isoformat(),
+                "score": validation.score,
+                "total_issues": validation.missing + validation.duplicates + validation.type_errors + validation.out_of_range + validation.invalid_patterns + validation.outliers
+            })
+    
+    return {"history": history}
 @app.get("/")
 def root():
     return {"message": "Validata API is working!"}
