@@ -55,7 +55,7 @@ class Validation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
-Base.metadata.drop_all(bind=engine)
+# Create tables
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
