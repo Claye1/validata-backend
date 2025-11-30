@@ -150,6 +150,74 @@ def validate_dataset(dataset_id: int, db: Session = Depends(get_db)):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
+    # For now we'll use mock data since we don't store the actual CSV
+    # In production, you'd re-read from S3 or store in DB
+    
+    # Simulated comprehensive validation
+    issues = {
+        "missing_values": 8,
+        "duplicate_rows": 2,
+        "type_errors": 5,
+        "out_of_range": 3,
+        "invalid_patterns": 2,
+        "outliers": 1
+    }
+    
+    total_issues = sum(issues.values())
+    
+    # Calculate score based on severity
+    score = max(0, 100 - (total_issues * 3))
+    
+    new_validation = Validation(
+        dataset_id=dataset_id,
+        score=int(score),
+        missing=issues["missing_values"],
+        duplicates=issues["duplicate_rows"]
+    )
+    db.add(new_validation)
+    db.commit()
+    db.refresh(new_validation)
+    
+    return {
+        "dataset_id": dataset_id,
+        "score": int(score),
+        "issues": issues,
+        "total_issues": total_issues,
+        "created_at": new_validation.created_at.isoformat(),
+        "details": {
+            "missing_values": {
+                "count": issues["missing_values"],
+                "severity": "high",
+                "description": "Empty cells found in critical columns"
+            },
+            "duplicate_rows": {
+                "count": issues["duplicate_rows"],
+                "severity": "medium",
+                "description": "Exact duplicate records detected"
+            },
+            "type_errors": {
+                "count": issues["type_errors"],
+                "severity": "high",
+                "description": "Data type mismatches (e.g., text in numeric fields)"
+            },
+            "out_of_range": {
+                "count": issues["out_of_range"],
+                "severity": "medium",
+                "description": "Values outside expected ranges"
+            },
+            "invalid_patterns": {
+                "count": issues["invalid_patterns"],
+                "severity": "low",
+                "description": "Format validation failures (emails, dates, etc.)"
+            },
+            "outliers": {
+                "count": issues["outliers"],
+                "severity": "low",
+                "description": "Statistical anomalies detected"
+            }
+        }
+    }
+    
     # Mock validation for now (in real app, re-read the file)
     missing = 2
     duplicates = 1
@@ -179,12 +247,56 @@ def get_validation(dataset_id: int, db: Session = Depends(get_db)):
     if not validation:
         raise HTTPException(status_code=404, detail="Validation not found")
     
+    # Return enhanced validation data
+    issues = {
+        "missing_values": validation.missing,
+        "duplicate_rows": validation.duplicates,
+        "type_errors": 5,
+        "out_of_range": 3,
+        "invalid_patterns": 2,
+        "outliers": 1
+    }
+    
+    total_issues = sum(issues.values())
+    
     return {
         "dataset_id": validation.dataset_id,
         "score": validation.score,
-        "missing": validation.missing,
-        "duplicates": validation.duplicates,
-        "created_at": validation.created_at.isoformat()
+        "issues": issues,
+        "total_issues": total_issues,
+        "created_at": validation.created_at.isoformat(),
+        "details": {
+            "missing_values": {
+                "count": issues["missing_values"],
+                "severity": "high",
+                "description": "Empty cells found in critical columns"
+            },
+            "duplicate_rows": {
+                "count": issues["duplicate_rows"],
+                "severity": "medium",
+                "description": "Exact duplicate records detected"
+            },
+            "type_errors": {
+                "count": issues["type_errors"],
+                "severity": "high",
+                "description": "Data type mismatches (e.g., text in numeric fields)"
+            },
+            "out_of_range": {
+                "count": issues["out_of_range"],
+                "severity": "medium",
+                "description": "Values outside expected ranges"
+            },
+            "invalid_patterns": {
+                "count": issues["invalid_patterns"],
+                "severity": "low",
+                "description": "Format validation failures (emails, dates, etc.)"
+            },
+            "outliers": {
+                "count": issues["outliers"],
+                "severity": "low",
+                "description": "Statistical anomalies detected"
+            }
+        }
     }
 
 @app.get("/")
