@@ -38,6 +38,7 @@ class Dataset(Base):
     filename = Column(String)
     rows = Column(Integer)
     columns = Column(Text)
+    csv_data = Column(Text)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
 class Validation(Base):
@@ -47,6 +48,10 @@ class Validation(Base):
     score = Column(Integer)
     missing = Column(Integer)
     duplicates = Column(Integer)
+    type_errors = Column(Integer)
+    out_of_range = Column(Integer)
+    invalid_patterns = Column(Integer)
+    outliers = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
@@ -126,10 +131,13 @@ async def upload_file(file: UploadFile = File(...), db: Session = Depends(get_db
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
         
+        csv_text = contents.decode('utf-8')
+        
         new_dataset = Dataset(
             filename=file.filename,
             rows=len(df),
-            columns=",".join(df.columns.tolist())
+            columns=",".join(df.columns.tolist()),
+            csv_data=csv_text
         )
         db.add(new_dataset)
         db.commit()
@@ -150,95 +158,121 @@ def validate_dataset(dataset_id: int, db: Session = Depends(get_db)):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     
-    # For now we'll use mock data since we don't store the actual CSV
-    # In production, you'd re-read from S3 or store in DB
+    df = pd.read_csv(io.StringIO(dataset.csv_data))
     
-    # Simulated comprehensive validation
-    issues = {
-        "missing_values": 8,
-        "duplicate_rows": 2,
-        "type_errors": 5,
-        "out_of_range": 3,
-        "invalid_patterns": 2,
-        "outliers": 1
-    }
+    # 1. Missing values
+    missing_values = int(df.isnull().sum().sum())
     
-    total_issues = sum(issues.values())
+    # 2. Duplicate rows
+    duplicate_rows = int(df.duplicated().sum())
     
-    # Calculate score based on severity
-    score = max(0, 100 - (total_issues * 3))
+    # 3. Type errors
+    type_errors = 0
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            try:
+                numeric_conversion = pd.to_numeric(df[col], errors='coerce')
+                if numeric_conversion.notna().sum() > len(df) * 0.5:
+                    type_errors += int(numeric_conversion.isna().sum())
+            except:
+                pass
+    
+    # 4. Out of range
+    out_of_range = 0
+    for col in df.select_dtypes(include=['int64', 'float64']).columns:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 3 * IQR
+        upper_bound = Q3 + 3 * IQR
+        out_of_range += int(((df[col] < lower_bound) | (df[col] > upper_bound)).sum())
+    
+    # 5. Invalid patterns
+    invalid_patterns = 0
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            if any(keyword in col.lower() for keyword in ['email', 'mail', 'e-mail']):
+                email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+                invalid_patterns += int((~df[col].astype(str).str.match(email_pattern, na=False)).sum())
+    
+    # 6. Outliers
+    outliers = 0
+    for col in df.select_dtypes(include=['int64', 'float64']).columns:
+        mean = df[col].mean()
+        std = df[col].std()
+        if std > 0:
+            z_scores = (df[col] - mean) / std
+            outliers += int((abs(z_scores) > 3).sum())
+    
+    total_cells = len(df) * len(df.columns)
+    total_issues = missing_values + duplicate_rows + type_errors + out_of_range + invalid_patterns + outliers
+    
+    if total_cells > 0:
+        score = max(0, 100 - int((total_issues / total_cells) * 100))
+    else:
+        score = 0
     
     new_validation = Validation(
         dataset_id=dataset_id,
-        score=int(score),
-        missing=issues["missing_values"],
-        duplicates=issues["duplicate_rows"]
+        score=score,
+        missing=missing_values,
+        duplicates=duplicate_rows,
+        type_errors=type_errors,
+        out_of_range=out_of_range,
+        invalid_patterns=invalid_patterns,
+        outliers=outliers
     )
     db.add(new_validation)
     db.commit()
     db.refresh(new_validation)
     
+    issues = {
+        "missing_values": missing_values,
+        "duplicate_rows": duplicate_rows,
+        "type_errors": type_errors,
+        "out_of_range": out_of_range,
+        "invalid_patterns": invalid_patterns,
+        "outliers": outliers
+    }
+    
     return {
         "dataset_id": dataset_id,
-        "score": int(score),
+        "score": score,
         "issues": issues,
         "total_issues": total_issues,
         "created_at": new_validation.created_at.isoformat(),
         "details": {
             "missing_values": {
-                "count": issues["missing_values"],
+                "count": missing_values,
                 "severity": "high",
                 "description": "Empty cells found in critical columns"
             },
             "duplicate_rows": {
-                "count": issues["duplicate_rows"],
+                "count": duplicate_rows,
                 "severity": "medium",
                 "description": "Exact duplicate records detected"
             },
             "type_errors": {
-                "count": issues["type_errors"],
+                "count": type_errors,
                 "severity": "high",
                 "description": "Data type mismatches (e.g., text in numeric fields)"
             },
             "out_of_range": {
-                "count": issues["out_of_range"],
+                "count": out_of_range,
                 "severity": "medium",
                 "description": "Values outside expected ranges"
             },
             "invalid_patterns": {
-                "count": issues["invalid_patterns"],
+                "count": invalid_patterns,
                 "severity": "low",
                 "description": "Format validation failures (emails, dates, etc.)"
             },
             "outliers": {
-                "count": issues["outliers"],
+                "count": outliers,
                 "severity": "low",
                 "description": "Statistical anomalies detected"
             }
         }
-    }
-    
-    # Mock validation for now (in real app, re-read the file)
-    missing = 2
-    duplicates = 1
-    score = 85
-    
-    new_validation = Validation(
-        dataset_id=dataset_id,
-        score=score,
-        missing=missing,
-        duplicates=duplicates
-    )
-    db.add(new_validation)
-    db.commit()
-    db.refresh(new_validation)
-    
-    return {
-        "dataset_id": dataset_id,
-        "score": score,
-        "missing": missing,
-        "duplicates": duplicates,
-        "created_at": new_validation.created_at.isoformat()
     }
 
 @app.get("/validate/{dataset_id}")
@@ -247,14 +281,13 @@ def get_validation(dataset_id: int, db: Session = Depends(get_db)):
     if not validation:
         raise HTTPException(status_code=404, detail="Validation not found")
     
-    # Return enhanced validation data
     issues = {
         "missing_values": validation.missing,
         "duplicate_rows": validation.duplicates,
-        "type_errors": 5,
-        "out_of_range": 3,
-        "invalid_patterns": 2,
-        "outliers": 1
+        "type_errors": validation.type_errors,
+        "out_of_range": validation.out_of_range,
+        "invalid_patterns": validation.invalid_patterns,
+        "outliers": validation.outliers
     }
     
     total_issues = sum(issues.values())
