@@ -107,7 +107,7 @@ def create_token(email: str) -> str:
 def read_root():
     return {"message": "Validata API is running"}
 
-@app.post("/signup")
+@app.post("/auth/signup")
 def signup(request: SignupRequest, db: Session = Depends(get_db)):
     # Check if user exists
     existing = db.query(User).filter(User.email == request.email).first()
@@ -123,7 +123,7 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)):
     token = create_token(request.email)
     return {"token": token, "email": request.email}
 
-@app.post("/login")
+@app.post("/auth/login")
 def login(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email).first()
     if not user or not verify_password(request.password, user.password_hash):
