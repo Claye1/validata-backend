@@ -13,7 +13,18 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
+@app.get("/dataset/{dataset_id}")
+def get_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    """Get dataset information for PDF generation"""
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    return {
+        "filename": dataset.filename,
+        "rows": dataset.rows,
+        "uploaded_at": dataset.uploaded_at.isoformat()
+    }
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
