@@ -354,7 +354,17 @@ def get_history(email: str, db: Session = Depends(get_db)):
             })
     
     return {"history": history}
-@app.get("/")
+@app.get("/dataset/{dataset_id}")
+def get_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    return {
+        "filename": dataset.filename,
+        "rows": dataset.rows,
+        "uploaded_at": dataset.uploaded_at.isoformat()
+    }@app.get("/")
 def root():
     return {"message": "Validata API is working!"}
 
