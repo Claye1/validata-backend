@@ -295,3 +295,54 @@ def get_validation(dataset_id: int, db: Session = Depends(get_db)):
         "details": {},
         "created_at": validation.created_at.isoformat()
     }
+
+@app.post("/generate-synthetic")
+async def generate_synthetic_data(db: Session = Depends(get_db)):
+    """Generate synthetic customer data for testing"""
+    import random
+    from io import StringIO
+    
+    # Generate 100 rows of synthetic data
+    num_rows = 100
+    
+    data = {
+        'customer_id': list(range(1, num_rows + 1)),
+        'name': [f"Customer {i}" for i in range(1, num_rows + 1)],
+        'email': [f"customer{i}@example.com" if random.random() > 0.05 else "" for i in range(1, num_rows + 1)],
+        'age': [random.randint(18, 80) if random.random() > 0.03 else None for _ in range(num_rows)],
+        'purchase_amount': [round(random.uniform(10, 1000), 2) if random.random() > 0.02 else None for _ in range(num_rows)],
+        'signup_date': [f"2024-{random.randint(1,12):02d}-{random.randint(1,28):02d}" for _ in range(num_rows)]
+    }
+    
+    # Add some duplicates
+    for i in range(5):
+        idx = random.randint(0, num_rows - 1)
+        data['customer_id'][idx] = data['customer_id'][random.randint(0, num_rows - 1)]
+    
+    # Create DataFrame
+    df = pd.DataFrame(data)
+    
+    # Convert to CSV string
+    csv_buffer = StringIO()
+    df.to_csv(csv_buffer, index=False)
+    csv_string = csv_buffer.getvalue()
+    
+    # Store dataset
+    dataset = Dataset(
+        user_email="synthetic",
+        filename="synthetic_customer_data.csv",
+        rows=len(df),
+        columns=str(list(df.columns)),
+        csv_data=csv_string
+    )
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    
+    return {
+        "dataset_id": dataset.id,
+        "filename": "synthetic_customer_data.csv",
+        "rows": len(df),
+        "columns": len(df.columns),
+        "message": "Synthetic data generated successfully"
+    }
